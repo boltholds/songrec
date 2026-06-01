@@ -1,0 +1,102 @@
+from pathlib import Path
+from typing import NamedTuple
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+from sqlalchemy import delete, select
+
+from songrec.db.models import FingerprintRecord, Track
+from songrec.fingerprint import Fingerprint
+
+
+class FingerprintMatchRow(NamedTuple):
+    hash: str
+    track_id: int
+    track_offset_ms: int
+    title: str
+
+
+class TrackRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add_track(self, path: Path, title: str) -> int:
+        path_value = str(path)
+
+        existing_track = self.session.scalar(
+            select(Track).where(Track.path == path_value)
+        )
+
+        if existing_track is not None:
+            return existing_track.id
+
+        track = Track(
+            path=path_value,
+            title=title,
+        )
+
+        self.session.add(track)
+        self.session.flush()
+
+        return track.id
+
+    def get_track(self, track_id: int) -> Track | None:
+        return self.session.get(Track, track_id)
+
+
+class FingerprintRepository:
+    def __init__(self, session: Session):
+        self.session = session
+
+    def add_fingerprints(
+        self,
+        track_id: int,
+        fingerprints: list[Fingerprint],
+    ) -> None:
+        records = [
+            FingerprintRecord(
+                hash=fingerprint.hash,
+                track_id=track_id,
+                offset_ms=fingerprint.offset_ms,
+            )
+            for fingerprint in fingerprints
+        ]
+
+        self.session.add_all(records)
+
+    def find_matches(
+        self,
+        query_fingerprints: list[Fingerprint],
+    ) -> list[FingerprintMatchRow]:
+        hashes = list({fingerprint.hash for fingerprint in query_fingerprints})
+
+        if not hashes:
+            return []
+
+        statement = (
+            select(
+                FingerprintRecord.hash,
+                FingerprintRecord.track_id,
+                FingerprintRecord.offset_ms,
+                Track.title,
+            )
+            .join(Track, Track.id == FingerprintRecord.track_id)
+            .where(FingerprintRecord.hash.in_(hashes))
+        )
+
+        rows = self.session.execute(statement).all()
+
+        return [
+            FingerprintMatchRow(
+                hash=row.hash,
+                track_id=row.track_id,
+                track_offset_ms=row.offset_ms,
+                title=row.title,
+            )
+            for row in rows
+        ]
+        
+    def delete_by_track_id(self, track_id: int) -> None:
+        self.session.execute(
+            delete(FingerprintRecord).where(FingerprintRecord.track_id == track_id)
+        )
