@@ -38,8 +38,9 @@ def index_directory(directory: Path, session: Session) -> None:
             path=path,
             title=path.stem,
         )
+
         fingerprint_repo.delete_by_track_id(track_id)
-        
+
         fingerprint_repo.add_fingerprints(
             track_id=track_id,
             fingerprints=fingerprints,

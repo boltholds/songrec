@@ -25,7 +25,7 @@ def create_session_factory(db_path: Path) -> sessionmaker[Session]:
         autocommit=False,
         expire_on_commit=False,
     )
-    
+
 def drop_database(db_path: Path) -> None:
     if db_path.exists():
         db_path.unlink()

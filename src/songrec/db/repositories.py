@@ -1,9 +1,8 @@
 from pathlib import Path
 from typing import NamedTuple
 
-from sqlalchemy import select
-from sqlalchemy.orm import Session
 from sqlalchemy import delete, select
+from sqlalchemy.orm import Session
 
 from songrec.db.models import FingerprintRecord, Track
 from songrec.fingerprint import Fingerprint
@@ -43,10 +42,20 @@ class TrackRepository:
     def get_track(self, track_id: int) -> Track | None:
         return self.session.get(Track, track_id)
 
+    def get_by_path(self, path: Path) -> Track | None:
+        return self.session.scalar(
+            select(Track).where(Track.path == str(path))
+        )
+
 
 class FingerprintRepository:
     def __init__(self, session: Session):
         self.session = session
+
+    def delete_by_track_id(self, track_id: int) -> None:
+        self.session.execute(
+            delete(FingerprintRecord).where(FingerprintRecord.track_id == track_id)
+        )
 
     def add_fingerprints(
         self,
@@ -95,8 +104,3 @@ class FingerprintRepository:
             )
             for row in rows
         ]
-        
-    def delete_by_track_id(self, track_id: int) -> None:
-        self.session.execute(
-            delete(FingerprintRecord).where(FingerprintRecord.track_id == track_id)
-        )
