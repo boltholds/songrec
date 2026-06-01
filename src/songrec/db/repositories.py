@@ -1,7 +1,7 @@
 from pathlib import Path
 from typing import NamedTuple
 
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session
 
 from songrec.db.models import FingerprintRecord, Track
@@ -47,6 +47,16 @@ class TrackRepository:
             select(Track).where(Track.path == str(path))
         )
 
+    def list_tracks(self) -> list[Track]:
+        return list(
+            self.session.scalars(
+                select(Track).order_by(Track.id.asc())
+            ).all()
+        )
+
+    def count_tracks(self) -> int:
+        return int(self.session.scalar(select(func.count(Track.id))) or 0)
+
 
 class FingerprintRepository:
     def __init__(self, session: Session):
@@ -72,6 +82,11 @@ class FingerprintRepository:
         ]
 
         self.session.add_all(records)
+
+    def count_fingerprints(self) -> int:
+        return int(
+            self.session.scalar(select(func.count(FingerprintRecord.id))) or 0
+        )
 
     def find_matches(
         self,

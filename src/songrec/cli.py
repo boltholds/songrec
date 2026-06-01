@@ -140,5 +140,25 @@ def recognize(
     console.print(table)
 
 
+@app.command()
+def serve(
+    host: str = "127.0.0.1",
+    port: int = 8000,
+    reload: bool = False,
+) -> None:
+    """
+    Run SongRec FastAPI service.
+    """
+    import uvicorn
+
+    uvicorn.run(
+        "songrec.api.app:create_app",
+        factory=True,
+        host=host,
+        port=port,
+        reload=reload,
+    )
+
+
 if __name__ == "__main__":
     app()
