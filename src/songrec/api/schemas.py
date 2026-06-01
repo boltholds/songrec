@@ -65,3 +65,13 @@ class RecognizeResponse(BaseModel):
     status: str = Field(description="matched, rejected, or not_found")
     result: RecognitionResultResponse | None
     latency_ms: float
+
+
+class SeparationResponse(BaseModel):
+    input_filename: str
+    model_name: str
+    mode: str
+    vocals_path: str
+    instrumental_path: str
+    output_dir: str
+    latency_ms: float

@@ -23,6 +23,10 @@ class ApiSettings:
     def queries_dir(self) -> Path:
         return self.storage_dir / "queries"
 
+    @property
+    def stems_dir(self) -> Path:
+        return self.storage_dir / "stems"
+
 
 _settings = ApiSettings()
 
@@ -30,6 +34,7 @@ _settings = ApiSettings()
 def get_settings() -> ApiSettings:
     _settings.tracks_dir.mkdir(parents=True, exist_ok=True)
     _settings.queries_dir.mkdir(parents=True, exist_ok=True)
+    _settings.stems_dir.mkdir(parents=True, exist_ok=True)
     return _settings
 
 

@@ -10,6 +10,7 @@ from songrec.matcher import MatchDecision
 from songrec.db.session import create_session_factory, drop_database
 from songrec.graphs.recognize_graph import build_recognition_graph
 from songrec.indexer import index_directory
+from songrec.separation import DemucsSeparator, SeparationError
 
 app = typer.Typer()
 console = Console()
@@ -50,10 +51,10 @@ def benchmark(
     durations: str = "3,5,10,15",
     samples_per_track: int = 3,
     modes: str = "clean",
-    min_score: int = 12,
+    min_score: int = 20,
     min_confidence: float = 0.005,
-    min_margin: float = 1.05,
-    recognition_mode: str = typer.Option("scale_aware", "--recognition-mode", help="fast, multi_speed, or scale_aware"),
+    min_margin: float = 1.5,
+    recognition_mode: str = typer.Option("fast", "--recognition-mode", help="fast, multi_speed, or scale_aware"),
     speed_factors: str = typer.Option("0.90,0.95,1.0,1.05,1.10", help="Comma-separated factors for multi_speed"),
     threshold_sweep: bool = typer.Option(False, "--threshold-sweep", help="Show approximate threshold calibration table"),
 ) -> None:
@@ -150,6 +151,44 @@ def recognize(
     table.add_row("Speed factor", f"{result.speed_factor:.2f}")
     table.add_row("Offset", f"{result.offset_ms / 1000:.2f} sec")
 
+    console.print(table)
+
+
+@app.command()
+def separate(
+    audio_path: Path,
+    output_dir: Path = Path("songrec_storage/stems"),
+    model_name: str = typer.Option("htdemucs", "--model"),
+    device: str | None = typer.Option(None, "--device", help="Demucs device, for example cuda or cpu"),
+    jobs: int | None = typer.Option(None, "--jobs", help="Demucs worker count"),
+) -> None:
+    """
+    Split an audio file into vocals.wav and no_vocals.wav with Demucs.
+    """
+    if not audio_path.exists():
+        raise typer.BadParameter(f"Audio file does not exist: {audio_path}")
+
+    separator = DemucsSeparator(
+        output_dir=output_dir,
+        model_name=model_name,
+        device=device,
+        jobs=jobs,
+    )
+
+    try:
+        result = separator.separate(audio_path)
+    except SeparationError as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    table = Table(title="Separation result")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Input", str(result.input_path))
+    table.add_row("Model", result.model_name)
+    table.add_row("Vocals", str(result.vocals_path))
+    table.add_row("Instrumental", str(result.instrumental_path))
+    table.add_row("Output dir", str(result.output_dir))
     console.print(table)
 
 

@@ -273,10 +273,69 @@ poetry run songrec benchmark music \
 
 `multi_speed` is kept as a baseline. `scale_aware` is the preferred MVP-3.2 mode.
 
-MVP-3.2 completed:
-- implemented scale-aware matching without audio time-stretch
-- supports sped-up/slowed tracks through time-scale voting
-- achieved 100% raw top-1 accuracy on clean/speed/negative benchmark
-- achieved 99.49% calibrated policy accuracy
-- kept wrong accepted = 0 and false positives = 0
-- reduced avg latency from ~589 ms multi_speed to ~471 ms scale_aware
+## MVP-4: source separation
+
+MVP-4 adds a Demucs-based separation layer. It splits an input track into two stems:
+
+```text
+vocals.wav
+no_vocals.wav
+```
+
+This is the foundation for the next stages: lyrics ASR from vocals and instrumental-only matching from `no_vocals`.
+
+Demucs is a heavy optional dependency. The rest of SongRec still works without it. Install Demucs into the Poetry environment only when you want to use separation:
+
+```bash
+poetry run python -m pip install demucs
+```
+
+CLI separation:
+
+```bash
+poetry run songrec separate "music/Daughter - Youth.mp3"
+```
+
+With explicit device:
+
+```bash
+poetry run songrec separate "music/Daughter - Youth.mp3" --device cuda
+```
+
+API separation:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/separate" \
+  -F "file=@music/Daughter - Youth.mp3"
+```
+
+Windows `cmd` multiline form:
+
+```cmd
+curl -X POST "http://127.0.0.1:8000/separate" ^
+  -F "file=@music/Daughter - Youth.mp3"
+```
+
+Example response:
+
+```json
+{
+  "input_filename": "Daughter - Youth.mp3",
+  "model_name": "htdemucs",
+  "mode": "demucs_two_stems",
+  "vocals_path": "songrec_storage/stems/.../vocals.wav",
+  "instrumental_path": "songrec_storage/stems/.../no_vocals.wav",
+  "output_dir": "songrec_storage/stems/...",
+  "latency_ms": 12345.6
+}
+```
+
+The separation layer is intentionally independent from fingerprinting. Current recognition modes remain unchanged:
+
+```text
+fast
+multi_speed
+scale_aware
+```
+
+Next planned step: use `vocals.wav` for Whisper/faster-whisper lyrics recognition and `no_vocals.wav` for instrumental fingerprints / chroma features.
