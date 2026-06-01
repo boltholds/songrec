@@ -3,7 +3,7 @@ name = "songrec"
 version = "0.1.0"
 description = ""
 authors = [
-    {name = "bolthold",email = "anton.p@primitive.city"}
+    {name = "boltholds",email = "bolthold7507@gmail.com"}
 ]
 readme = "README.md"
 requires-python = ">=3.13,<4.0.0"

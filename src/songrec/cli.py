@@ -4,7 +4,8 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from songrec.benchmark import print_benchmark_report, run_benchmark
+from songrec.benchmark import parse_modes, print_benchmark_report, run_benchmark
+from songrec.matcher import MatchDecision
 from songrec.db.session import create_session_factory, drop_database
 from songrec.graphs.recognize_graph import build_recognition_graph
 from songrec.indexer import index_directory
@@ -45,11 +46,17 @@ def reset_db(
 def benchmark(
     music_dir: Path,
     db_path: Path = Path("songrec.sqlite3"),
-    durations: str = "5,10,15",
+    durations: str = "3,5,10,15",
     samples_per_track: int = 3,
+    modes: str = "clean",
+    min_score: int = 20,
+    min_confidence: float = 0.005,
+    min_margin: float = 1.5,
 ) -> None:
     """
     Cut fragments from indexed tracks and measure recognition accuracy.
+
+    Modes: clean,noise,volume,speed-0.95,speed-1.05,speed-1.10,negative
     """
     if not music_dir.exists():
         raise typer.BadParameter(f"Directory does not exist: {music_dir}")
@@ -74,6 +81,12 @@ def benchmark(
             session=session,
             durations_sec=durations_sec,
             samples_per_track=samples_per_track,
+            modes=parse_modes(modes),
+            decision=MatchDecision(
+                min_score=min_score,
+                min_confidence=min_confidence,
+                min_margin=min_margin,
+            ),
         )
 
     print_benchmark_report(results)
@@ -106,6 +119,11 @@ def recognize(
         console.print("[red]No match found.[/red]")
         return
 
+    if not result.is_confident:
+        console.print("[yellow]Low-confidence match. Treat as no confident match.[/yellow]")
+        if result.reject_reason:
+            console.print(f"[yellow]Reason:[/yellow] {result.reject_reason}")
+
     table = Table(title="Recognition result")
     table.add_column("Field")
     table.add_column("Value")
@@ -114,6 +132,9 @@ def recognize(
     table.add_row("Track ID", str(result.track_id))
     table.add_row("Score", str(result.score))
     table.add_row("Confidence", f"{result.confidence:.4f}")
+    table.add_row("Second score", str(result.second_score))
+    table.add_row("Margin", f"{result.margin:.2f}x")
+    table.add_row("Confident", str(result.is_confident))
     table.add_row("Offset", f"{result.offset_ms / 1000:.2f} sec")
 
     console.print(table)
