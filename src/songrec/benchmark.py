@@ -12,9 +12,9 @@ from sqlalchemy.orm import Session
 
 from songrec.audio import load_audio
 from songrec.db.repositories import FingerprintRepository, TrackRepository
-from songrec.fingerprint import fingerprint_audio
 from songrec.indexer import iter_audio_files
-from songrec.matcher import MatchDecision, MatchResult, match
+from songrec.matcher import MatchDecision, MatchResult
+from songrec.recognition.speed import DEFAULT_SPEED_FACTORS, recognize_audio, parse_speed_factors
 
 console = Console()
 
@@ -128,15 +128,16 @@ def recognize_audio_fragment(
     fragment: np.ndarray,
     fingerprint_repo: FingerprintRepository,
     decision: MatchDecision,
+    recognition_mode: str = "fast",
+    speed_factors: list[float] | None = None,
 ) -> tuple[MatchResult | None, int]:
-    query_fingerprints = fingerprint_audio(fragment)
-    rows = fingerprint_repo.find_matches(query_fingerprints)
-    result = match(
-        query_fingerprints=query_fingerprints,
-        db_rows=rows,
+    return recognize_audio(
+        audio=fragment,
+        fingerprint_repo=fingerprint_repo,
         decision=decision,
+        mode=recognition_mode,
+        speed_factors=speed_factors or list(DEFAULT_SPEED_FACTORS),
     )
-    return result, len(query_fingerprints)
 
 
 def parse_modes(modes: str) -> list[str]:
@@ -152,6 +153,8 @@ def run_benchmark(
     modes: list[str] | None = None,
     sample_rate: int = 11_025,
     decision: MatchDecision | None = None,
+    recognition_mode: str = "fast",
+    speed_factors: list[float] | None = None,
 ) -> list[BenchmarkResult]:
     files = list(iter_audio_files(music_dir))
     modes = modes or ["clean"]
@@ -215,6 +218,8 @@ def run_benchmark(
                         fragment=fragment,
                         fingerprint_repo=fingerprint_repo,
                         decision=decision,
+                        recognition_mode=recognition_mode,
+                        speed_factors=speed_factors,
                     )
                     latency_ms = (perf_counter() - started_at) * 1000
 
@@ -275,6 +280,14 @@ def print_benchmark_report(results: list[BenchmarkResult]) -> None:
     summary_table.add_row("Avg latency", f"{avg_latency_ms:.2f} ms")
     summary_table.add_row("Avg score", f"{avg_score:.2f}")
     summary_table.add_row("Avg margin", f"{avg_margin:.2f}")
+
+    recognition_modes = sorted({
+        result.result.mode
+        for result in results
+        if result.result is not None
+    })
+    if recognition_modes:
+        summary_table.add_row("Recognition mode", ", ".join(recognition_modes))
 
     console.print(summary_table)
 
@@ -347,12 +360,14 @@ def print_benchmark_report(results: list[BenchmarkResult]) -> None:
     failure_table.add_column("Start")
     failure_table.add_column("Score")
     failure_table.add_column("Margin")
+    failure_table.add_column("Factor")
     failure_table.add_column("Reason")
 
     for failure in failures[:20]:
         got = failure.result.title if failure.result is not None else "No match"
         score = str(failure.result.score) if failure.result is not None else "-"
         margin = f"{failure.result.margin:.2f}" if failure.result is not None else "-"
+        factor = f"{failure.result.speed_factor:.2f}" if failure.result is not None else "-"
         reason = (
             failure.result.reject_reason
             if failure.result is not None and failure.result.reject_reason
@@ -367,6 +382,7 @@ def print_benchmark_report(results: list[BenchmarkResult]) -> None:
             f"{failure.case.start_sec:.2f}s",
             score,
             margin,
+            factor,
             reason,
         )
 

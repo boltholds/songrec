@@ -25,6 +25,8 @@ class MatchResult:
     margin: float
     is_confident: bool
     reject_reason: str | None = None
+    speed_factor: float = 1.0
+    mode: str = "fast"
 
 
 def match(

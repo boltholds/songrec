@@ -4,12 +4,13 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 
 from songrec.api.dependencies import ApiSettings, get_settings
 from songrec.api.routes.tracks import ensure_supported_audio, safe_filename, save_upload
 from songrec.api.schemas import RecognitionResultResponse, RecognizeResponse
 from songrec.graphs.recognize_graph import build_recognition_graph
+from songrec.recognition.speed import parse_speed_factors
 
 router = APIRouter(tags=["recognition"])
 
@@ -17,6 +18,8 @@ router = APIRouter(tags=["recognition"])
 @router.post("/recognize", response_model=RecognizeResponse)
 async def recognize(
     file: UploadFile = File(...),
+    mode: str = Query("fast", pattern="^(fast|multi_speed)$"),
+    speed_factors: str = Query("0.90,0.95,1.0,1.05,1.10"),
     settings: ApiSettings = Depends(get_settings),
 ) -> RecognizeResponse:
     filename = safe_filename(file.filename or "query.wav")
@@ -33,6 +36,8 @@ async def recognize(
             {
                 "audio_path": destination,
                 "db_path": settings.db_path,
+                "mode": mode,
+                "speed_factors": parse_speed_factors(speed_factors),
             }
         )
     finally:
@@ -65,6 +70,8 @@ async def recognize(
         offset_sec=result.offset_ms / 1000,
         is_confident=result.is_confident,
         reject_reason=result.reject_reason,
+        speed_factor=result.speed_factor,
+        mode=result.mode,
     )
 
     return RecognizeResponse(

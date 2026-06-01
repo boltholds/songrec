@@ -7,7 +7,13 @@ from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
 from songrec.api.dependencies import ApiSettings, get_session, get_settings
-from songrec.api.schemas import TrackListResponse, TrackRead, TrackUploadResponse
+from songrec.api.schemas import (
+    TrackDeleteResponse,
+    TrackDetailResponse,
+    TrackListResponse,
+    TrackRead,
+    TrackUploadResponse,
+)
 from songrec.audio import load_audio
 from songrec.db.repositories import FingerprintRepository, TrackRepository
 from songrec.fingerprint import fingerprint_audio
@@ -99,4 +105,65 @@ async def upload_track(
         title=title or Path(filename).stem,
         path=str(destination),
         fingerprints_count=len(fingerprints),
+    )
+
+
+@router.get("/{track_id}", response_model=TrackDetailResponse)
+def get_track(
+    track_id: int,
+    session: Session = Depends(get_session),
+) -> TrackDetailResponse:
+    track_repo = TrackRepository(session)
+    fingerprint_repo = FingerprintRepository(session)
+
+    track = track_repo.get_track(track_id)
+    if track is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Track {track_id} not found",
+        )
+
+    return TrackDetailResponse(
+        id=track.id,
+        title=track.title,
+        path=track.path,
+        fingerprints_count=fingerprint_repo.count_by_track_id(track.id),
+    )
+
+
+@router.delete("/{track_id}", response_model=TrackDeleteResponse)
+def delete_track(
+    track_id: int,
+    session: Session = Depends(get_session),
+) -> TrackDeleteResponse:
+    track_repo = TrackRepository(session)
+    fingerprint_repo = FingerprintRepository(session)
+
+    track = track_repo.get_track(track_id)
+    if track is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Track {track_id} not found",
+        )
+
+    title = track.title
+    path_value = track.path
+    fingerprints_deleted = fingerprint_repo.count_by_track_id(track.id)
+
+    fingerprint_repo.delete_by_track_id(track.id)
+    track_repo.delete_track(track)
+    session.commit()
+
+    file_path = Path(path_value)
+    file_existed = file_path.exists()
+    if file_existed:
+        file_path.unlink(missing_ok=True)
+
+    return TrackDeleteResponse(
+        deleted=True,
+        id=track_id,
+        title=title,
+        path=path_value,
+        fingerprints_deleted=fingerprints_deleted,
+        file_deleted=file_existed,
     )

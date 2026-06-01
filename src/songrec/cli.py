@@ -5,6 +5,7 @@ from rich.console import Console
 from rich.table import Table
 
 from songrec.benchmark import parse_modes, print_benchmark_report, run_benchmark
+from songrec.recognition.speed import parse_speed_factors
 from songrec.matcher import MatchDecision
 from songrec.db.session import create_session_factory, drop_database
 from songrec.graphs.recognize_graph import build_recognition_graph
@@ -52,11 +53,14 @@ def benchmark(
     min_score: int = 20,
     min_confidence: float = 0.005,
     min_margin: float = 1.5,
+    recognition_mode: str = typer.Option("fast", "--recognition-mode", help="fast or multi_speed"),
+    speed_factors: str = typer.Option("0.90,0.95,1.0,1.05,1.10", help="Comma-separated factors for multi_speed"),
 ) -> None:
     """
     Cut fragments from indexed tracks and measure recognition accuracy.
 
     Modes: clean,noise,volume,speed-0.95,speed-1.05,speed-1.10,negative
+    Recognition modes: fast,multi_speed
     """
     if not music_dir.exists():
         raise typer.BadParameter(f"Directory does not exist: {music_dir}")
@@ -87,6 +91,8 @@ def benchmark(
                 min_confidence=min_confidence,
                 min_margin=min_margin,
             ),
+            recognition_mode=recognition_mode,
+            speed_factors=parse_speed_factors(speed_factors),
         )
 
     print_benchmark_report(results)
@@ -96,6 +102,8 @@ def benchmark(
 def recognize(
     audio_path: Path,
     db_path: Path = Path("songrec.sqlite3"),
+    mode: str = typer.Option("fast", "--mode", help="fast or multi_speed"),
+    speed_factors: str = typer.Option("0.90,0.95,1.0,1.05,1.10", help="Comma-separated factors for multi_speed"),
 ) -> None:
     """
     Recognize a song from an audio fragment.
@@ -106,6 +114,8 @@ def recognize(
         {
             "audio_path": audio_path,
             "db_path": db_path,
+            "mode": mode,
+            "speed_factors": parse_speed_factors(speed_factors),
         }
     )
 
@@ -135,6 +145,8 @@ def recognize(
     table.add_row("Second score", str(result.second_score))
     table.add_row("Margin", f"{result.margin:.2f}x")
     table.add_row("Confident", str(result.is_confident))
+    table.add_row("Recognition mode", result.mode)
+    table.add_row("Speed factor", f"{result.speed_factor:.2f}")
     table.add_row("Offset", f"{result.offset_ms / 1000:.2f} sec")
 
     console.print(table)

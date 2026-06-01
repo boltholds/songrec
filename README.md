@@ -114,3 +114,76 @@ Example recognition response:
   "latency_ms": 104.8
 }
 ```
+
+### Track CRUD endpoints
+
+MVP-2.1 adds track detail and delete endpoints:
+
+```bash
+curl "http://127.0.0.1:8000/tracks/6"
+```
+
+```bash
+curl -X DELETE "http://127.0.0.1:8000/tracks/24"
+```
+
+`DELETE /tracks/{track_id}` removes the track row, its fingerprints, and the uploaded audio file from `songrec_storage/tracks` when the file exists.
+
+## MVP-3: sped-up / slowed recognition
+
+MVP-3 adds a `multi_speed` recognition mode. The default `fast` mode still runs one normal fingerprint pass. The new mode tries several time-stretched versions of the query audio and chooses the best candidate.
+
+CLI recognition:
+
+```bash
+poetry run songrec recognize queries/youth_10s_sped.mp3 --mode multi_speed
+```
+
+Custom speed factors:
+
+```bash
+poetry run songrec recognize queries/youth_10s_sped.mp3 \
+  --mode multi_speed \
+  --speed-factors 0.90,0.95,1.0,1.05,1.10
+```
+
+API recognition:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/recognize?mode=multi_speed" \
+  -F "file=@queries/youth_10s_sped.mp3"
+```
+
+API with custom factors:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/recognize?mode=multi_speed&speed_factors=0.90,0.95,1.0,1.05,1.10" \
+  -F "file=@queries/youth_10s_sped.mp3"
+```
+
+Benchmark fast mode:
+
+```bash
+poetry run songrec benchmark music \
+  --modes clean,speed-0.95,speed-1.05,speed-1.10 \
+  --recognition-mode fast
+```
+
+Benchmark multi-speed mode:
+
+```bash
+poetry run songrec benchmark music \
+  --modes clean,speed-0.95,speed-1.05,speed-1.10 \
+  --recognition-mode multi_speed
+```
+
+The recognition response now includes:
+
+```json
+{
+  "speed_factor": 0.95,
+  "mode": "multi_speed"
+}
+```
+
+`speed_factor` is the transformation applied to the query before fingerprinting. For example, a query that was sped up by `1.05x` is often recovered by applying a factor close to `0.95`.

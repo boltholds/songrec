@@ -14,6 +14,22 @@ class TrackRead(BaseModel):
     path: str
 
 
+class TrackDetailResponse(BaseModel):
+    id: int
+    title: str
+    path: str
+    fingerprints_count: int
+
+
+class TrackDeleteResponse(BaseModel):
+    deleted: bool
+    id: int
+    title: str
+    path: str
+    fingerprints_deleted: int
+    file_deleted: bool
+
+
 class TrackListResponse(BaseModel):
     tracks: list[TrackRead]
     total: int
@@ -41,6 +57,8 @@ class RecognitionResultResponse(BaseModel):
     offset_sec: float
     is_confident: bool
     reject_reason: str | None = None
+    speed_factor: float = 1.0
+    mode: str = "fast"
 
 
 class RecognizeResponse(BaseModel):

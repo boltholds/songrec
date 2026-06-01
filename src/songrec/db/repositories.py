@@ -42,6 +42,9 @@ class TrackRepository:
     def get_track(self, track_id: int) -> Track | None:
         return self.session.get(Track, track_id)
 
+    def delete_track(self, track: Track) -> None:
+        self.session.delete(track)
+
     def get_by_path(self, path: Path) -> Track | None:
         return self.session.scalar(
             select(Track).where(Track.path == str(path))
@@ -86,6 +89,16 @@ class FingerprintRepository:
     def count_fingerprints(self) -> int:
         return int(
             self.session.scalar(select(func.count(FingerprintRecord.id))) or 0
+        )
+
+    def count_by_track_id(self, track_id: int) -> int:
+        return int(
+            self.session.scalar(
+                select(func.count(FingerprintRecord.id)).where(
+                    FingerprintRecord.track_id == track_id
+                )
+            )
+            or 0
         )
 
     def find_matches(
