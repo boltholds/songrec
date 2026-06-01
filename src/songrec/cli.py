@@ -50,10 +50,10 @@ def benchmark(
     durations: str = "3,5,10,15",
     samples_per_track: int = 3,
     modes: str = "clean",
-    min_score: int = 20,
+    min_score: int = 12,
     min_confidence: float = 0.005,
-    min_margin: float = 1.5,
-    recognition_mode: str = typer.Option("fast", "--recognition-mode", help="fast or multi_speed"),
+    min_margin: float = 1.05,
+    recognition_mode: str = typer.Option("scale_aware", "--recognition-mode", help="fast, multi_speed, or scale_aware"),
     speed_factors: str = typer.Option("0.90,0.95,1.0,1.05,1.10", help="Comma-separated factors for multi_speed"),
     threshold_sweep: bool = typer.Option(False, "--threshold-sweep", help="Show approximate threshold calibration table"),
 ) -> None:
@@ -61,7 +61,7 @@ def benchmark(
     Cut fragments from indexed tracks and measure recognition accuracy.
 
     Modes: clean,noise,volume,speed-0.95,speed-1.05,speed-1.10,negative
-    Recognition modes: fast,multi_speed
+    Recognition modes: fast,multi_speed,scale_aware
     """
     if not music_dir.exists():
         raise typer.BadParameter(f"Directory does not exist: {music_dir}")
@@ -103,7 +103,7 @@ def benchmark(
 def recognize(
     audio_path: Path,
     db_path: Path = Path("songrec.sqlite3"),
-    mode: str = typer.Option("fast", "--mode", help="fast or multi_speed"),
+    mode: str = typer.Option("fast", "--mode", help="fast, multi_speed, or scale_aware"),
     speed_factors: str = typer.Option("0.90,0.95,1.0,1.05,1.10", help="Comma-separated factors for multi_speed"),
 ) -> None:
     """

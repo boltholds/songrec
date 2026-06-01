@@ -37,7 +37,7 @@ def validate_input(state: RecognitionState) -> RecognitionState:
     if not db_path.exists():
         return {"error": f"Database does not exist: {db_path}"}
 
-    if mode not in {"fast", "multi_speed"}:
+    if mode not in {"fast", "multi_speed", "scale_aware"}:
         return {"error": f"Unknown recognition mode: {mode}"}
 
     return {"error": None, "mode": mode}

@@ -53,24 +53,33 @@ def generate_hashes(
     fan_value: int = 15,
     min_delta_frames: int = 1,
     max_delta_frames: int = 80,
+    time_scale: float = 1.0,
 ) -> list[Fingerprint]:
+    """
+    Generate Shazam-like landmark hashes.
+
+    time_scale makes matching speed-aware without physically stretching audio.
+    If a query was sped up by 1.10x, its peak distances are compressed;
+    hashing with time_scale=1.10 maps query deltas and offsets back toward
+    the original track time axis.
+    """
     fingerprints: list[Fingerprint] = []
 
     for index, anchor in enumerate(peaks):
         anchor_time, anchor_freq = anchor
-
         targets = peaks[index + 1 : index + 1 + fan_value]
 
         for target_time, target_freq in targets:
-            delta_time = target_time - anchor_time
+            raw_delta_time = target_time - anchor_time
+            scaled_delta_time = int(round(raw_delta_time * time_scale))
 
-            if delta_time < min_delta_frames:
+            if scaled_delta_time < min_delta_frames:
                 continue
 
-            if delta_time > max_delta_frames:
+            if scaled_delta_time > max_delta_frames:
                 continue
 
-            raw_hash = f"{anchor_freq}|{target_freq}|{delta_time}".encode()
+            raw_hash = f"{anchor_freq}|{target_freq}|{scaled_delta_time}".encode()
             fingerprint_hash = sha1(raw_hash).hexdigest()[:20]
 
             offset_sec = librosa.frames_to_time(
@@ -82,13 +91,23 @@ def generate_hashes(
             fingerprints.append(
                 Fingerprint(
                     hash=fingerprint_hash,
-                    offset_ms=int(offset_sec * 1000),
+                    offset_ms=int(offset_sec * 1000 * time_scale),
                 )
             )
 
     return fingerprints
 
 
-def fingerprint_audio(audio: np.ndarray) -> list[Fingerprint]:
+def fingerprint_audio(
+    audio: np.ndarray,
+    time_scale: float = 1.0,
+) -> list[Fingerprint]:
     peaks = find_peaks(audio)
-    return generate_hashes(peaks)
+    return generate_hashes(peaks, time_scale=time_scale)
+
+
+def fingerprint_peaks(
+    peaks: list[tuple[int, int]],
+    time_scale: float = 1.0,
+) -> list[Fingerprint]:
+    return generate_hashes(peaks, time_scale=time_scale)

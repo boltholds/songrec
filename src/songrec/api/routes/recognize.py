@@ -18,7 +18,7 @@ router = APIRouter(tags=["recognition"])
 @router.post("/recognize", response_model=RecognizeResponse)
 async def recognize(
     file: UploadFile = File(...),
-    mode: str = Query("fast", pattern="^(fast|multi_speed)$"),
+    mode: str = Query("fast", pattern="^(fast|multi_speed|scale_aware)$"),
     speed_factors: str = Query("0.90,0.95,1.0,1.05,1.10"),
     settings: ApiSettings = Depends(get_settings),
 ) -> RecognizeResponse:

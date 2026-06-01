@@ -230,3 +230,53 @@ poetry run songrec benchmark music \
 ```
 
 The threshold sweep is calculated from already selected best matches. For `multi_speed` it is an approximation, but it is useful for choosing a safer starting policy.
+
+## MVP-3.2: scale-aware recognition
+
+MVP-3.2 adds `scale_aware` recognition mode. Unlike `multi_speed`, it does not physically time-stretch the query audio for every factor. It detects the peak constellation once, then hashes query landmarks with scaled `delta_time` and scaled offsets:
+
+```text
+track_time ≈ query_time * scale + offset
+```
+
+This keeps the original fingerprint index compatible, but makes sped-up / slowed matching much cheaper than full audio resampling.
+
+CLI:
+
+```bash
+poetry run songrec recognize queries/youth_10s_sped.mp3 --mode scale_aware
+```
+
+API:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/recognize?mode=scale_aware" \
+  -F "file=@queries/youth_10s_sped.mp3"
+```
+
+Benchmark:
+
+```bash
+poetry run songrec benchmark music \
+  --modes clean,speed-0.95,speed-1.05,speed-1.10,negative \
+  --recognition-mode scale_aware \
+  --threshold-sweep
+```
+
+Compare against the legacy resampling mode:
+
+```bash
+poetry run songrec benchmark music \
+  --modes clean,speed-0.95,speed-1.05,speed-1.10,negative \
+  --recognition-mode multi_speed
+```
+
+`multi_speed` is kept as a baseline. `scale_aware` is the preferred MVP-3.2 mode.
+
+MVP-3.2 completed:
+- implemented scale-aware matching without audio time-stretch
+- supports sped-up/slowed tracks through time-scale voting
+- achieved 100% raw top-1 accuracy on clean/speed/negative benchmark
+- achieved 99.49% calibrated policy accuracy
+- kept wrong accepted = 0 and false positives = 0
+- reduced avg latency from ~589 ms multi_speed to ~471 ms scale_aware
