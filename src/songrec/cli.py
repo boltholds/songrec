@@ -11,6 +11,8 @@ from songrec.db.session import create_session_factory, drop_database
 from songrec.graphs.recognize_graph import build_recognition_graph
 from songrec.indexer import index_directory
 from songrec.separation import DemucsSeparator, SeparationError
+from songrec.lyrics import AsrError, FasterWhisperAsr
+from songrec.lyrics.pipeline import LyricsRecognitionPipeline
 
 app = typer.Typer()
 console = Console()
@@ -190,6 +192,75 @@ def separate(
     table.add_row("Instrumental", str(result.instrumental_path))
     table.add_row("Output dir", str(result.output_dir))
     console.print(table)
+
+
+@app.command("transcribe")
+def transcribe_audio(
+    audio_path: Path,
+    model_name: str = typer.Option("small", "--model", help="faster-whisper model name"),
+    language: str | None = typer.Option(None, "--language", help="Optional language code, for example en or ru"),
+    device: str = typer.Option("auto", "--device", help="faster-whisper device: auto, cpu, cuda"),
+    compute_type: str = typer.Option("default", "--compute-type"),
+    beam_size: int = typer.Option(5, "--beam-size"),
+    separate_vocals: bool = typer.Option(False, "--separate-vocals", help="Run Demucs first and transcribe vocals.wav"),
+    stems_dir: Path = typer.Option(Path("songrec_storage/stems"), "--stems-dir"),
+    demucs_model: str = typer.Option("htdemucs", "--demucs-model"),
+    demucs_device: str | None = typer.Option(None, "--demucs-device"),
+) -> None:
+    """
+    Transcribe vocals/lyrics from an audio file with faster-whisper.
+    """
+    if not audio_path.exists():
+        raise typer.BadParameter(f"Audio file does not exist: {audio_path}")
+
+    separator = None
+    if separate_vocals:
+        separator = DemucsSeparator(
+            output_dir=stems_dir / audio_path.stem,
+            model_name=demucs_model,
+            device=demucs_device,
+        )
+
+    pipeline = LyricsRecognitionPipeline(
+        asr=FasterWhisperAsr(
+            model_name=model_name,
+            device=device,
+            compute_type=compute_type,
+            beam_size=beam_size,
+        ),
+        separator=separator,
+    )
+
+    try:
+        result = pipeline.transcribe(
+            audio_path,
+            language=language,
+            separate_vocals=separate_vocals,
+        )
+    except (AsrError, SeparationError, ValueError) as exc:
+        console.print(f"[red]{exc}[/red]")
+        raise typer.Exit(code=1) from exc
+
+    transcription = result.transcription
+
+    table = Table(title="Lyrics transcription")
+    table.add_column("Field")
+    table.add_column("Value")
+    table.add_row("Input", str(result.source_audio_path))
+    table.add_row("ASR audio", str(result.asr_audio_path))
+    table.add_row("Separated", str(result.separated))
+    if result.vocals_path:
+        table.add_row("Vocals", str(result.vocals_path))
+    table.add_row("Model", transcription.model_name)
+    table.add_row("Language", transcription.language or "unknown")
+    table.add_row("Latency", f"{result.latency_ms:.2f} ms")
+    console.print(table)
+
+    console.print("\n[bold]Text[/bold]")
+    console.print(transcription.text or "[yellow]No text detected.[/yellow]")
+
+    console.print("\n[bold]Normalized[/bold]")
+    console.print(transcription.normalized_text or "[yellow]No text detected.[/yellow]")
 
 
 @app.command()

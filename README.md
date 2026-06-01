@@ -339,3 +339,92 @@ scale_aware
 ```
 
 Next planned step: use `vocals.wav` for Whisper/faster-whisper lyrics recognition and `no_vocals.wav` for instrumental fingerprints / chroma features.
+
+## MVP-5: Lyrics ASR
+
+MVP-5 adds an optional lyrics transcription layer. It can transcribe an audio fragment directly, or run Demucs first and transcribe the isolated `vocals.wav` stem.
+
+The ASR backend is optional, so the rest of SongRec still works without it. Install it when you want lyrics recognition:
+
+```bash
+poetry run python -m pip install faster-whisper
+```
+
+For the full vocals pipeline, install Demucs too:
+
+```bash
+poetry run python -m pip install demucs
+```
+
+Recommended Windows setup for ML/audio dependencies is Python 3.11 or 3.12. Python 3.13 may cause binary compatibility issues with torch/torchaudio/Demucs.
+
+### CLI
+
+Transcribe a vocals file or any audio fragment:
+
+```bash
+poetry run songrec transcribe "songrec_storage/stems/htdemucs/Daughter - Youth/vocals.wav" --model small --language en
+```
+
+Run source separation first, then transcribe vocals:
+
+```bash
+poetry run songrec transcribe "music/Daughter - Youth.mp3" --separate-vocals --model small --language en
+```
+
+Use GPU if your faster-whisper installation supports it:
+
+```bash
+poetry run songrec transcribe "music/Daughter - Youth.mp3" --separate-vocals --device cuda --compute-type float16
+```
+
+### API
+
+Transcribe uploaded audio directly:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/lyrics/transcribe" ^
+  -F "file=@queries/youth_10s.mp3"
+```
+
+Run Demucs first and transcribe vocals:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/lyrics/transcribe?separate_vocals=true&language=en" ^
+  -F "file=@music/Daughter - Youth.mp3"
+```
+
+Example response:
+
+```json
+{
+  "input_filename": "youth_10s.mp3",
+  "model_name": "small",
+  "language": "en",
+  "separated": false,
+  "asr_audio_path": "songrec_storage\\queries\\..._youth_10s.mp3",
+  "vocals_path": null,
+  "instrumental_path": null,
+  "text": "...",
+  "normalized_text": "...",
+  "segments": [
+    {
+      "start_sec": 0.0,
+      "end_sec": 4.2,
+      "text": "..."
+    }
+  ],
+  "latency_ms": 1234.5
+}
+```
+
+### Architecture
+
+```text
+songrec/lyrics/
+  asr.py          optional faster-whisper wrapper
+  normalizer.py   text cleanup for future lyrics search
+  pipeline.py     optional Demucs -> vocals -> ASR workflow
+```
+
+MVP-5 does not yet search a lyrics database. It prepares the ASR and normalization layer. The next step is lyrics indexing/search: store lyrics per track, split into lines/chunks, and match normalized ASR output against that index.

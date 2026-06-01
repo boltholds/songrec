@@ -75,3 +75,23 @@ class SeparationResponse(BaseModel):
     instrumental_path: str
     output_dir: str
     latency_ms: float
+
+
+class TranscriptionSegmentResponse(BaseModel):
+    start_sec: float
+    end_sec: float
+    text: str
+
+
+class LyricsTranscriptionResponse(BaseModel):
+    input_filename: str
+    model_name: str
+    language: str | None
+    separated: bool
+    asr_audio_path: str
+    vocals_path: str | None = None
+    instrumental_path: str | None = None
+    text: str
+    normalized_text: str
+    segments: list[TranscriptionSegmentResponse]
+    latency_ms: float
