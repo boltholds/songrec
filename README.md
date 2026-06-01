@@ -187,3 +187,46 @@ The recognition response now includes:
 ```
 
 `speed_factor` is the transformation applied to the query before fingerprinting. For example, a query that was sped up by `1.05x` is often recovered by applying a factor close to `0.95`.
+
+## MVP-3.1: benchmark reporting and threshold calibration
+
+MVP-3.1 separates recognition quality from confidence-gate policy.
+
+The benchmark now reports:
+
+- `Policy accuracy` — correct final behavior after confidence thresholds
+- `Raw top-1 accuracy` — whether the best candidate was the expected track before rejection
+- `Correct rejected` — expected track was found but rejected by thresholds
+- `Wrong accepted` — dangerous wrong confident answer
+- `Wrong rejected` — wrong candidate found but safely rejected
+- `False positives` — confident match for negative/out-of-library cases
+
+Run the extended benchmark:
+
+```bash
+poetry run songrec benchmark music \
+  --modes clean,speed-0.95,speed-1.05,speed-1.10 \
+  --recognition-mode multi_speed
+```
+
+Show an approximate threshold calibration table:
+
+```bash
+poetry run songrec benchmark music \
+  --modes clean,speed-0.95,speed-1.05,speed-1.10,negative \
+  --recognition-mode multi_speed \
+  --threshold-sweep
+```
+
+Try a softer policy after checking that false positives remain zero:
+
+```bash
+poetry run songrec benchmark music \
+  --modes clean,speed-0.95,speed-1.05,speed-1.10,negative \
+  --recognition-mode multi_speed \
+  --min-score 15 \
+  --min-confidence 0.003 \
+  --min-margin 1.20
+```
+
+The threshold sweep is calculated from already selected best matches. For `multi_speed` it is an approximation, but it is useful for choosing a safer starting policy.

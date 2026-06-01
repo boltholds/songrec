@@ -14,7 +14,7 @@ from songrec.audio import load_audio
 from songrec.db.repositories import FingerprintRepository, TrackRepository
 from songrec.indexer import iter_audio_files
 from songrec.matcher import MatchDecision, MatchResult
-from songrec.recognition.speed import DEFAULT_SPEED_FACTORS, recognize_audio, parse_speed_factors
+from songrec.recognition.speed import DEFAULT_SPEED_FACTORS, recognize_audio
 
 console = Console()
 
@@ -33,10 +33,38 @@ class BenchmarkCase:
 class BenchmarkResult:
     case: BenchmarkCase
     result: MatchResult | None
-    is_correct: bool
-    is_false_positive: bool
+    policy_correct: bool
+    raw_top1_correct: bool
+    correct_rejected: bool
+    wrong_accepted: bool
+    wrong_rejected: bool
+    false_positive: bool
     latency_ms: float
     query_fingerprints_count: int
+
+    @property
+    def outcome(self) -> str:
+        if self.case.expected_track_id is None:
+            if self.false_positive:
+                return "negative_false_positive"
+            return "negative_rejected"
+
+        if self.result is None:
+            return "missed"
+
+        if self.raw_top1_correct and self.result.is_confident:
+            return "correct_accepted"
+
+        if self.correct_rejected:
+            return "correct_rejected"
+
+        if self.wrong_accepted:
+            return "wrong_accepted"
+
+        if self.wrong_rejected:
+            return "wrong_rejected"
+
+        return "unknown"
 
 
 def slice_audio(
@@ -145,6 +173,35 @@ def parse_modes(modes: str) -> list[str]:
     return parsed or ["clean"]
 
 
+def classify_result(
+    case: BenchmarkCase,
+    result: MatchResult | None,
+) -> tuple[bool, bool, bool, bool, bool, bool]:
+    """Return policy_correct, raw_top1_correct, correct_rejected, wrong_accepted, wrong_rejected, false_positive."""
+    if case.expected_track_id is None:
+        false_positive = result is not None and result.is_confident
+        policy_correct = not false_positive
+        return policy_correct, False, False, False, False, false_positive
+
+    if result is None:
+        return False, False, False, False, False, False
+
+    raw_top1_correct = result.track_id == case.expected_track_id
+    correct_rejected = raw_top1_correct and not result.is_confident
+    wrong_accepted = not raw_top1_correct and result.is_confident
+    wrong_rejected = not raw_top1_correct and not result.is_confident
+    policy_correct = raw_top1_correct and result.is_confident
+
+    return (
+        policy_correct,
+        raw_top1_correct,
+        correct_rejected,
+        wrong_accepted,
+        wrong_rejected,
+        False,
+    )
+
+
 def run_benchmark(
     music_dir: Path,
     session: Session,
@@ -223,26 +280,25 @@ def run_benchmark(
                     )
                     latency_ms = (perf_counter() - started_at) * 1000
 
-                    confident_result = (
-                        result if result is not None and result.is_confident else None
-                    )
-
-                    if expected_track_id is None:
-                        is_correct = confident_result is None
-                        is_false_positive = confident_result is not None
-                    else:
-                        is_correct = (
-                            confident_result is not None
-                            and confident_result.track_id == expected_track_id
-                        )
-                        is_false_positive = False
+                    (
+                        policy_correct,
+                        raw_top1_correct,
+                        correct_rejected,
+                        wrong_accepted,
+                        wrong_rejected,
+                        false_positive,
+                    ) = classify_result(case, result)
 
                     results.append(
                         BenchmarkResult(
                             case=case,
                             result=result,
-                            is_correct=is_correct,
-                            is_false_positive=is_false_positive,
+                            policy_correct=policy_correct,
+                            raw_top1_correct=raw_top1_correct,
+                            correct_rejected=correct_rejected,
+                            wrong_accepted=wrong_accepted,
+                            wrong_rejected=wrong_rejected,
+                            false_positive=false_positive,
                             latency_ms=latency_ms,
                             query_fingerprints_count=query_fingerprints_count,
                         )
@@ -255,27 +311,162 @@ def _avg(values: list[float]) -> float:
     return sum(values) / max(len(values), 1)
 
 
-def print_benchmark_report(results: list[BenchmarkResult]) -> None:
+def _positive_results(results: list[BenchmarkResult]) -> list[BenchmarkResult]:
+    return [result for result in results if result.case.expected_track_id is not None]
+
+
+def _negative_results(results: list[BenchmarkResult]) -> list[BenchmarkResult]:
+    return [result for result in results if result.case.expected_track_id is None]
+
+
+def _policy_accepts(result: MatchResult | None, min_score: int, min_confidence: float, min_margin: float) -> bool:
+    if result is None:
+        return False
+    return (
+        result.score >= min_score
+        and result.confidence >= min_confidence
+        and result.margin >= min_margin
+    )
+
+
+def print_threshold_sweep(results: list[BenchmarkResult]) -> None:
+    positive = _positive_results(results)
+    negative = _negative_results(results)
+
+    if not positive:
+        return
+
+    score_values = [10, 12, 15, 20, 30]
+    margin_values = [1.05, 1.10, 1.20, 1.30, 1.50]
+    confidence_values = [0.002, 0.003, 0.005]
+
+    candidates: list[tuple[float, int, int, int, int, float, float, int, float]] = []
+
+    for min_score in score_values:
+        for min_margin in margin_values:
+            for min_confidence in confidence_values:
+                correct_accepted = 0
+                correct_rejected = 0
+                wrong_accepted = 0
+                false_positive = 0
+
+                for item in positive:
+                    accepted = _policy_accepts(item.result, min_score, min_confidence, min_margin)
+                    if item.raw_top1_correct and accepted:
+                        correct_accepted += 1
+                    elif item.raw_top1_correct and not accepted:
+                        correct_rejected += 1
+                    elif not item.raw_top1_correct and accepted:
+                        wrong_accepted += 1
+
+                for item in negative:
+                    if _policy_accepts(item.result, min_score, min_confidence, min_margin):
+                        false_positive += 1
+
+                policy_accuracy = (correct_accepted + len(negative) - false_positive) / max(len(results), 1)
+                positive_accept_rate = correct_accepted / max(len(positive), 1)
+
+                candidates.append(
+                    (
+                        policy_accuracy,
+                        -false_positive,
+                        -wrong_accepted,
+                        -correct_rejected,
+                        min_score,
+                        min_margin,
+                        min_confidence,
+                        correct_accepted,
+                        positive_accept_rate,
+                    )
+                )
+
+    candidates.sort(reverse=True)
+
+    table = Table(title="Threshold sweep candidates")
+    table.add_column("min_score")
+    table.add_column("min_margin")
+    table.add_column("min_conf")
+    table.add_column("Policy acc")
+    table.add_column("Positive accepted")
+    table.add_column("Correct rejected")
+    table.add_column("Wrong accepted")
+    table.add_column("False positives")
+
+    for candidate in candidates[:10]:
+        (
+            policy_accuracy,
+            neg_false_positive,
+            neg_wrong_accepted,
+            neg_correct_rejected,
+            min_score,
+            min_margin,
+            min_confidence,
+            correct_accepted,
+            positive_accept_rate,
+        ) = candidate
+
+        table.add_row(
+            str(min_score),
+            f"{min_margin:.2f}",
+            f"{min_confidence:.3f}",
+            f"{policy_accuracy:.2%}",
+            f"{correct_accepted}/{len(positive)} ({positive_accept_rate:.2%})",
+            str(-neg_correct_rejected),
+            str(-neg_wrong_accepted),
+            str(-neg_false_positive),
+        )
+
+    console.print(table)
+    console.print(
+        "[dim]Threshold sweep is calculated from already selected best matches. "
+        "For multi_speed it is an approximation, but it is useful for calibration.[/dim]"
+    )
+
+
+def print_benchmark_report(
+    results: list[BenchmarkResult],
+    show_threshold_sweep: bool = False,
+) -> None:
     if not results:
         console.print("[yellow]No benchmark results.[/yellow]")
         return
 
     total = len(results)
-    correct = sum(result.is_correct for result in results)
-    accuracy = correct / total
+    positive = _positive_results(results)
+    negative = _negative_results(results)
+    positive_total = len(positive)
+    negative_total = len(negative)
+
+    policy_correct = sum(result.policy_correct for result in results)
+    policy_accuracy = policy_correct / total
+    raw_top1_correct = sum(result.raw_top1_correct for result in positive)
+    raw_top1_accuracy = raw_top1_correct / max(positive_total, 1)
+    correct_rejected = sum(result.correct_rejected for result in positive)
+    wrong_accepted = sum(result.wrong_accepted for result in positive)
+    wrong_rejected = sum(result.wrong_rejected for result in positive)
+    false_positives = sum(result.false_positive for result in results)
+    reject_rate_positive = correct_rejected / max(positive_total, 1)
+
     avg_latency_ms = _avg([result.latency_ms for result in results])
     matched_results = [result.result for result in results if result.result is not None]
     avg_score = _avg([float(result.score) for result in matched_results])
     avg_margin = _avg([float(result.margin) for result in matched_results])
-    false_positives = sum(result.is_false_positive for result in results)
 
     summary_table = Table(title="Benchmark summary")
     summary_table.add_column("Metric")
     summary_table.add_column("Value")
 
     summary_table.add_row("Total cases", str(total))
-    summary_table.add_row("Correct", str(correct))
-    summary_table.add_row("Top-1 accuracy", f"{accuracy:.2%}")
+    summary_table.add_row("Positive cases", str(positive_total))
+    summary_table.add_row("Negative cases", str(negative_total))
+    summary_table.add_row("Policy correct", str(policy_correct))
+    summary_table.add_row("Policy accuracy", f"{policy_accuracy:.2%}")
+    summary_table.add_row("Raw top-1 correct", str(raw_top1_correct))
+    summary_table.add_row("Raw top-1 accuracy", f"{raw_top1_accuracy:.2%}")
+    summary_table.add_row("Correct rejected", str(correct_rejected))
+    summary_table.add_row("Positive reject rate", f"{reject_rate_positive:.2%}")
+    summary_table.add_row("Wrong accepted", str(wrong_accepted))
+    summary_table.add_row("Wrong rejected", str(wrong_rejected))
     summary_table.add_row("False positives", str(false_positives))
     summary_table.add_row("Avg latency", f"{avg_latency_ms:.2f} ms")
     summary_table.add_row("Avg score", f"{avg_score:.2f}")
@@ -291,11 +482,13 @@ def print_benchmark_report(results: list[BenchmarkResult]) -> None:
 
     console.print(summary_table)
 
-    by_mode_table = Table(title="Accuracy by benchmark mode")
+    by_mode_table = Table(title="Benchmark mode breakdown")
     by_mode_table.add_column("Mode")
     by_mode_table.add_column("Cases")
-    by_mode_table.add_column("Correct")
-    by_mode_table.add_column("Accuracy")
+    by_mode_table.add_column("Policy acc")
+    by_mode_table.add_column("Raw top-1")
+    by_mode_table.add_column("Correct rejected")
+    by_mode_table.add_column("Wrong accepted")
     by_mode_table.add_column("False positives")
     by_mode_table.add_column("Avg latency")
 
@@ -303,56 +496,89 @@ def print_benchmark_report(results: list[BenchmarkResult]) -> None:
 
     for mode in modes:
         bucket = [result for result in results if result.case.mode == mode]
+        bucket_positive = _positive_results(bucket)
         bucket_total = len(bucket)
-        bucket_correct = sum(result.is_correct for result in bucket)
-        bucket_accuracy = bucket_correct / bucket_total
+        bucket_policy_correct = sum(result.policy_correct for result in bucket)
+        bucket_policy_accuracy = bucket_policy_correct / max(bucket_total, 1)
+        bucket_raw_top1 = sum(result.raw_top1_correct for result in bucket_positive)
+        bucket_raw_accuracy = bucket_raw_top1 / max(len(bucket_positive), 1)
+        bucket_correct_rejected = sum(result.correct_rejected for result in bucket_positive)
+        bucket_wrong_accepted = sum(result.wrong_accepted for result in bucket_positive)
+        bucket_false_positives = sum(result.false_positive for result in bucket)
         bucket_latency = _avg([result.latency_ms for result in bucket])
-        bucket_false_positives = sum(result.is_false_positive for result in bucket)
+
+        raw_value = "-" if not bucket_positive else f"{bucket_raw_accuracy:.2%}"
 
         by_mode_table.add_row(
             mode,
             str(bucket_total),
-            str(bucket_correct),
-            f"{bucket_accuracy:.2%}",
+            f"{bucket_policy_accuracy:.2%}",
+            raw_value,
+            str(bucket_correct_rejected),
+            str(bucket_wrong_accepted),
             str(bucket_false_positives),
             f"{bucket_latency:.2f} ms",
         )
 
     console.print(by_mode_table)
 
-    by_duration_table = Table(title="Accuracy by fragment duration")
+    by_duration_table = Table(title="Fragment duration breakdown")
     by_duration_table.add_column("Duration")
     by_duration_table.add_column("Cases")
-    by_duration_table.add_column("Correct")
-    by_duration_table.add_column("Accuracy")
+    by_duration_table.add_column("Policy acc")
+    by_duration_table.add_column("Raw top-1")
+    by_duration_table.add_column("Correct rejected")
+    by_duration_table.add_column("Wrong accepted")
     by_duration_table.add_column("Avg latency")
 
     durations = sorted({result.case.duration_sec for result in results})
 
     for duration_sec in durations:
         bucket = [result for result in results if result.case.duration_sec == duration_sec]
+        bucket_positive = _positive_results(bucket)
         bucket_total = len(bucket)
-        bucket_correct = sum(result.is_correct for result in bucket)
-        bucket_accuracy = bucket_correct / bucket_total
+        bucket_policy_correct = sum(result.policy_correct for result in bucket)
+        bucket_policy_accuracy = bucket_policy_correct / max(bucket_total, 1)
+        bucket_raw_top1 = sum(result.raw_top1_correct for result in bucket_positive)
+        bucket_raw_accuracy = bucket_raw_top1 / max(len(bucket_positive), 1)
+        bucket_correct_rejected = sum(result.correct_rejected for result in bucket_positive)
+        bucket_wrong_accepted = sum(result.wrong_accepted for result in bucket_positive)
         bucket_latency = _avg([result.latency_ms for result in bucket])
 
         by_duration_table.add_row(
             f"{duration_sec}s",
             str(bucket_total),
-            str(bucket_correct),
-            f"{bucket_accuracy:.2%}",
+            f"{bucket_policy_accuracy:.2%}",
+            f"{bucket_raw_accuracy:.2%}",
+            str(bucket_correct_rejected),
+            str(bucket_wrong_accepted),
             f"{bucket_latency:.2f} ms",
         )
 
     console.print(by_duration_table)
 
-    failures = [result for result in results if not result.is_correct]
+    outcome_table = Table(title="Outcome breakdown")
+    outcome_table.add_column("Outcome")
+    outcome_table.add_column("Cases")
+    outcome_table.add_column("Share")
+
+    outcomes = sorted({result.outcome for result in results})
+    for outcome in outcomes:
+        count = sum(result.outcome == outcome for result in results)
+        outcome_table.add_row(outcome, str(count), f"{count / total:.2%}")
+
+    console.print(outcome_table)
+
+    failures = [result for result in results if not result.policy_correct]
 
     if not failures:
-        console.print("[green]All benchmark cases passed.[/green]")
+        console.print("[green]All benchmark cases passed by current policy.[/green]")
+        if show_threshold_sweep:
+            print_threshold_sweep(results)
         return
 
-    failure_table = Table(title="Failed cases")
+    failure_table = Table(title="Non-policy-correct cases")
+    failure_table.add_column("Outcome")
     failure_table.add_column("Mode")
     failure_table.add_column("Expected")
     failure_table.add_column("Got")
@@ -375,6 +601,7 @@ def print_benchmark_report(results: list[BenchmarkResult]) -> None:
         )
 
         failure_table.add_row(
+            failure.outcome,
             failure.case.mode,
             failure.case.title,
             got,
@@ -389,4 +616,7 @@ def print_benchmark_report(results: list[BenchmarkResult]) -> None:
     console.print(failure_table)
 
     if len(failures) > 20:
-        console.print(f"[yellow]Showing 20 of {len(failures)} failed cases.[/yellow]")
+        console.print(f"[yellow]Showing 20 of {len(failures)} non-policy-correct cases.[/yellow]")
+
+    if show_threshold_sweep:
+        print_threshold_sweep(results)

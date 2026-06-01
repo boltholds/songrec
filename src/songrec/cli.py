@@ -55,6 +55,7 @@ def benchmark(
     min_margin: float = 1.5,
     recognition_mode: str = typer.Option("fast", "--recognition-mode", help="fast or multi_speed"),
     speed_factors: str = typer.Option("0.90,0.95,1.0,1.05,1.10", help="Comma-separated factors for multi_speed"),
+    threshold_sweep: bool = typer.Option(False, "--threshold-sweep", help="Show approximate threshold calibration table"),
 ) -> None:
     """
     Cut fragments from indexed tracks and measure recognition accuracy.
@@ -95,7 +96,7 @@ def benchmark(
             speed_factors=parse_speed_factors(speed_factors),
         )
 
-    print_benchmark_report(results)
+    print_benchmark_report(results, show_threshold_sweep=threshold_sweep)
 
 
 @app.command()
